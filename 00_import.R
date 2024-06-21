@@ -5,6 +5,7 @@ rm( list = ls() ) # clear environment
 # load packages
 library(here)
 library(tidyverse)
+library(MatchIt)
 
 # prepare data folders for the outcomes
 sapply( "_data", function(i) if( !dir.exists(i) ) dir.create(i) )
@@ -122,7 +123,7 @@ for ( i in names(d0) ) d0[[i]][["6_trideni"]] <- NULL
 d0$MR$`1_verbalni_pamet_a_uceni` <- d0$MR$`1_verbalni_pamet_a_uceni` %>% mutate( across( all_of( with( vars, variable[test == "1_verbalni_pamet_a_uceni"] ) ), as.numeric ) )
 d0$MR$`16_zrakove_motoricka_presnost` <- d0$MR$`16_zrakove_motoricka_presnost` %>% mutate(cas_adm_sek = as.numeric(cas_adm_sek) )
 
-# prepare a long data set for analyses
+# prepare a full long data set
 d1 <- lapply(
   
   setNames( names(d0), names(d0) ),
@@ -137,6 +138,8 @@ d1 <- lapply(
         
         d0[[i]][[j]] %>%
           select( all_of( c( "kod_ditete", with( vars, variable[test == j] ) ) ) ) %>%
+          filter( !is.na(kod_ditete) ) %>%
+          filter( !( kod_ditete %in% names( table(d0[[i]][[j]]$kod_ditete) )[ table(d0[[i]][[j]]$kod_ditete) > 1 ] ) ) %>% # drop duplicated records
           mutate( test = j, group = i ) %>%
           pivot_longer(
             cols = all_of( with( vars, variable[test == j] ) ),
@@ -165,66 +168,48 @@ d1 <- lapply(
   
   # finish it
   mutate( sex = case_when( sex == "1=zena" ~ "female", sex == "0=muz" ~ "male" ) ) %>%
-  mutate( index = paste0( sub( "_.*", "", test ), "_", index ) )
+  mutate( index = paste(test, index, sep = "_") )
 
-# extract MR-specific data set
-d2 <- left_join(
+# pivot the data set to wider for propensity matching
+d2 <- d1 %>%
 
-  d0$MR$`0_anamneza` %>% select("kod_ditete", "vek_roky"),
-  d0$MR$WISC %>% select( kod_ditete, ends_with("_MV") ),
-  by = "kod_ditete"
-
-) %>% na.omit()
-
-# NEED TO RECODE 2 IMMEDIATE AND 2 DELAYED SCORES SUCH THAT IT DOES NOT MAKE PROBLEMS WHEN PIVOTING WIDER!
-
-# FULL PLOTTING EXAMPLE
-d1 %>%
-  
-  pivot_longer(
-    cols = ends_with("_MV"),
-    names_to = "subtest",
-    values_to = "mental_age"
-  ) %>%
-  
-  mutate(
-    subtest = sub("_MV", "", subtest),
-    mental_age = ifelse(group == "HC", age_years, mental_age)
-  ) %>%
-  
-  filter(index == "9_KV_sum") %>%
-  
-  ggplot() +
-  aes(x = mental_age, y = score, colour = group, fill = group) +
-  geom_point(size = 1.2, alpha = .66) +
-  geom_smooth(method = "lm", linewidth = 1, alpha = .25) +
-  facet_wrap( ~ subtest ) +
-  theme_bw( base_size = 12 ) +
-  theme(legend.position = "bottom")
-
-# PROPENSITY MATCHING EXAMPLE
-d.match <- d1 %>%
-  filter(index == "9_KV_sum") %>%
-  mutate(
-    MR = ifelse(group == "HC", 0, 1),
-    mental_age = ifelse(group == "HC", age_years, DO_MV)
-  ) %>%
-  select(id, index, score, group, MR, mental_age) %>%
-  filter( complete.cases(mental_age) ) %>%
-  matchit(
-    MR ~ mental_age,
-    data = . ,
-    method = "nearest",
-    distance = "glm"
+  select(-test) %>%
+  pivot_wider(
+    names_from = index,
+    values_from = score
   )
 
-ddum <- match.data(d.match)
-
-ddum %>%
+# do the matching
+d3 <- lapply(
   
+  setNames( colnames(d2)[ grepl( "MV", colnames(d2) ) ], sub( "_MV", "", colnames(d2)[ grepl( "MV", colnames(d2) ) ] ) ),
+  function(i)
+    
+    d2 %>%
+    mutate(
+      MR = ifelse(group == "HC", 0, 1),
+      mental_age = ifelse( group == "HC", age_years, get(i) )
+    ) %>%
+    filter( complete.cases(mental_age) ) %>%
+    matchit(
+      MR ~ mental_age,
+      data = . ,
+      method = "nearest",
+      distance = "glm"
+    ) %>%
+    match.data()
+  
+) 
+
+# show density plots of matched data
+lapply( names(d3), function(i) d3[[i]] %>% mutate(matching_var = i) ) %>%
+  do.call( rbind.data.frame, . ) %>%
   ggplot() +
-  aes(x = mental_age, y = score, colour = group, fill = group) +
-  geom_point(size = 3.3) +
-  geom_smooth(method = "lm", linewidth = 1.5, alpha = .25) +
-  theme_bw( base_size = 12 ) +
-  theme(legend.position = "bottom")
+  aes(x = mental_age, colour = group) +
+  geom_density(linewidth = 1.5) +
+  labs(y = NULL, x = "Mental age (years)") +
+  scale_colour_manual( values = c("grey","black") ) +
+  facet_wrap( ~ matching_var, scales = "free" ) +
+  theme_bw(base_size = 14) +
+  theme(legend.position = "bottom", panel.grid = element_blank() )
+
