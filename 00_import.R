@@ -1,4 +1,4 @@
-# This script serves for purposes of data pre-processing.
+# This script serves the purposes of data pre-processing
 
 rm( list = ls() ) # clear environment
 
@@ -8,7 +8,7 @@ library(tidyverse)
 library(MatchIt)
 
 # prepare data folders for the outcomes
-sapply( "_data", function(i) if( !dir.exists(i) ) dir.create(i) )
+sapply( c("_data","figs","tabs"), function(i) if( !dir.exists(i) ) dir.create(i) )
 
 
 # DATA READ ----
@@ -91,7 +91,9 @@ vars <- vars %>%
   add_row( variable = "P1.4_HS", type = "cont", test = "3_neverbalni_pamet", name = NA ) %>% # return nonverbal memory
   add_row( variable = "odd_sum", type = "cont", test = "3_neverbalni_pamet", name = NA ) %>% # return nonverbal memory delayed recall
   filter( !( variable == "HS" & test == "5_zrakova_pozornost" ) ) %>%
-  filter( !( type == "cat" & variable != "gender" ) )
+  filter( !( type == "cat" & variable != "gender" ) ) %>%
+  mutate( index = paste0("X",test,"_",variable) ) %>%
+  filter( test != "6_trideni" ) # FOR NOW
 
 # check which variables do not match
 lapply(
@@ -131,7 +133,7 @@ d1 <- lapply(
     
     lapply(
       
-      unique(vars$test)[-c(1,7)],
+      unique(vars$test)[-1],
       function(j) {
         
         print( paste0("pre-processing ", j, " in ", i, " ...") ) # printing to diagnose mistakes
@@ -198,7 +200,7 @@ d3 <- lapply(
       distance = "glm"
     ) %>%
     match.data()
-  
+
 ) 
 
 # show density plots of matched data
@@ -207,9 +209,29 @@ lapply( names(d3), function(i) d3[[i]] %>% mutate(matching_var = i) ) %>%
   ggplot() +
   aes(x = mental_age, colour = group) +
   geom_density(linewidth = 1.5) +
-  labs(y = NULL, x = "Mental age (years)") +
   scale_colour_manual( values = c("grey","black") ) +
+  labs(
+    title = "Distrubution of matched samples",
+    subtitle = "Cases were matched using propensity scores of mental age according to nine WISC subtest",
+    x = "Mental age (years)",
+    y = NULL
+  ) +
   facet_wrap( ~ matching_var, scales = "free" ) +
   theme_bw(base_size = 14) +
-  theme(legend.position = "bottom", panel.grid = element_blank() )
+  theme(
+    legend.position = "bottom",
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = .5, face = "bold"),
+    plot.subtitle = element_text(hjust = .5)
+  )
 
+
+# SAVE OUTCOMES ----
+
+# save the plot
+ggsave( plot = last_plot(), filename = here("figs","propensity_score_matching.jpg"), dpi = 300, width = 12, height = 12 )
+
+# save the data sets
+write.table( x = d1, file = here("_data","long_df.csv"), sep = ",", row.names = F, quote = F )
+write.table( x = subset(vars, test != "0_anamneza"), file = here("_data","vars.csv"), sep = ";", row.names = F, quote = F )
+for ( i in names(d3) ) write.table( x = d3[[i]], file = here( "_data", paste0("wide_df_matched_by_",i,".csv") ), sep = ",", row.names = F, quote = F )
