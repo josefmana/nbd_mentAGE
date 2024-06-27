@@ -124,6 +124,8 @@ file.remove( here( "figs", list.files("figs")[ grepl( "X", list.files("figs") ) 
 
 # REGRESSIONS ----
 
+## fitting ----
+
 # fit regressions for each pair test score/matching
 fit <- lapply(
   
@@ -139,6 +141,52 @@ fit <- lapply(
       
     )
 )
+
+
+## fit diagnosis ----
+
+write.table(
+  
+  x = lapply(
+    
+    vars$index,
+    function(i)
+      
+      sapply(
+        
+        wisc_tests,
+        function(j)
+          
+          c( p_breusch_pagan = c( check_heteroscedasticity(fit[[i]][[j]]) ),
+             n_cook = sum( check_outliers(fit[[i]][[j]]) ),
+             p_shapiro_wilk = c( check_normality(fit[[i]][[j]]) ),
+             p_durbin_watson = c( check_autocorrelation(fit[[i]][[j]]) )
+             )
+        
+      ) %>%
+      
+      t() %>%
+      as.data.frame() %>%
+      rownames_to_column("match") %>%
+      mutate(outcome = i, .before = 1)
+
+  ) %>%
+    
+    do.call( rbind.data.frame, . ) %>%
+    mutate( heteroscedasticity = ifelse(p_breusch_pagan < .05, "*", NA), .after = p_breusch_pagan ) %>%
+    mutate( nonnormality = ifelse(p_shapiro_wilk < .05, "*", NA), .after = p_shapiro_wilk ) %>%
+    mutate( autocorrelation = ifelse(p_durbin_watson < .05, "*", NA), .after = p_durbin_watson ) %>%
+    mutate( across( starts_with("p_"), zerolead ) ),
+  
+  file = here("tabs","matched_regression_diagnosis.csv"),
+  sep = ",",
+  row.names = F,
+  quote = F,
+  na = ""
+  
+)
+
+## results extraction ----
 
 # extract and save regression coefficients
 tabreg <- lapply(
